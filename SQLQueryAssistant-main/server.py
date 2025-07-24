@@ -5,23 +5,35 @@ import logging
 import sqlite3
 
 mcp = FastMCP("Claims")
-db = SQLDatabase.from_uri("sqlite:///claims.db")  # Replace with your actual DB URI
+db = SQLDatabase.from_uri("postgresql+psycopg2://postgres:Qwerty.123@localhost:5432/claims")
 logger = logging.getLogger(__name__)
 
 @mcp.tool()
-def get_user_by_id(user_id: str) -> str:
-    """Retrieve a single user's details by their user_id"""
+# def get_user_by_id(user_id: str) -> str:
+#     """Retrieve a single user's details by their user_id"""
+#     query = """
+#     SELECT user_id, name, dob, health_card, email, phone, provider_id 
+#     FROM users 
+#     WHERE user_id = :user_id
+#     """
+#     try:
+#         results = db.run(query, parameters={"user_id": user_id})
+#         print(f"[get_user_by_id] Raw result: {results}")  # ✅ Debug line
+#         return results
+#     except Exception as e:
+#         print(f"[get_user_by_id] ❗ Database error: {str(e)}")
+#         return []
+@mcp.tool()
+def find_user_by_health_card_or_id(health_card: str) -> str:
+    """Search user using health card number"""
     query = """
-    SELECT user_id, name, dob, health_card, email, phone, provider_id 
-    FROM users 
-    WHERE user_id = :user_id
+    SELECT * FROM users
+    WHERE health_card = :health_card
     """
     try:
-        results = db.run(query, parameters={"user_id": user_id})
-        print(f"[get_user_by_id] Raw result: {results}")  # ✅ Debug line
-        return results
+        return db.run(query, parameters={"health_card": health_card})
     except Exception as e:
-        print(f"[get_user_by_id] ❗ Database error: {str(e)}")
+        print(f"[find_user_by_health_card_or_id] DB error: {str(e)}")
         return []
 
 @mcp.tool()
@@ -56,6 +68,10 @@ def get_policies_by_user(user_id: str) -> str:
     except Exception as e:
         print(f"Database error: {str(e)}")
         return []
+# # @mcp.tool()
+# # def get_policies_by_user(user_id: str) -> str:
+# #     """Retrieve all insurance policies for a specific user"""
+# #     return f"User ID: {user_id} has a policy with ID 1122342."
 
 @mcp.tool()
 def get_active_policies() -> str:
@@ -73,8 +89,13 @@ def get_active_policies() -> str:
     except Exception as e:
         print(f"Database error: {str(e)}")
         return []
+    
+# @mcp.tool()
+# def get_active_policies() -> str:
+#     """List all currently active insurance policies (connection test version)"""
+#     return "✅ Database connection test passed. Tool is active."
 
-# Claim tools
+# # Claim tools
 @mcp.tool()
 def get_claims_by_user_id(user_id: str) -> list[Dict]:
     import sqlite3
@@ -373,14 +394,93 @@ def get_user_communications(user_id: str)  -> str:
     except Exception as e:
         print(f"Database error: {str(e)}")
         return []
+@mcp.tool()
+def get_user_communications(user_id: str) -> str:
+    """Retrieve all communications sent to/from a user"""
+    query = """
+    SELECT log_id, type, subject, sent_at, status
+    FROM communications_log
+    WHERE user_id = :user_id
+    ORDER BY sent_at DESC
+    LIMIT 50
+    """
+    try:
+        results = db.run(query, parameters={"user_id": user_id})
+        return f"hi\nUser ID: {user_id}\nResults:\n{results}"
+    except Exception as e:
+        print(f"Database error: {str(e)}")
+        return f"hi\nUser ID: {user_id}\nDatabase error: {str(e)}"
+
+# @mcp.tool()
+# def ping() -> str:
+#     """Health check tool"""
+#     return "pong"
 
 @mcp.tool()
-def ping() -> str:
-    """Health check tool"""
-    return "pong"
+def register_new_user(details: dict) -> str:
+    """
+    Register a new user with details including name, dob, health_card, email, and provider_id.
+    Returns the new user's UUID.
+    """
+    import uuid
+    user_id = str(uuid.uuid4())
+    query = """
+    INSERT INTO users (user_id, name, dob, health_card, email, phone, provider_id)
+    VALUES (:user_id, :name, :dob, :health_card, :email, :phone, :provider_id)
+    """
+    try:
+        db.run(query, parameters={
+            "user_id": user_id,
+            "name": details.get("name"),
+            "dob": details.get("dob"),
+            "health_card": details.get("health_card"),
+            "email": details.get("email"),
+            "phone": details.get("phone", ""),
+            "provider_id": details.get("provider_id", "prov-001")  # Default provider if not given
+        })
+        return f"✅ Registered new user: {user_id}"
+    except Exception as e:
+        print(f"[register_new_user] Database error: {str(e)}")
+        return f"❌ Error: {str(e)}"
+
+@mcp.tool()
+def create_policy(user_id: str, provider_id: str, plan_type: str) -> str:
+    """
+    Create a new OHIP policy for a given user.
+    """
+    import uuid
+    from datetime import date, timedelta
+
+    policy_id = str(uuid.uuid4())
+    policy_number = f"POL-{str(uuid.uuid4())[:8].upper()}"
+    today = date.today()
+
+    query = """
+    INSERT INTO policies (policy_id, user_id, provider_id, policy_number, 
+                          plan_type, coverage_start, coverage_end, active, monthly_premium)
+    VALUES (:policy_id, :user_id, :provider_id, :policy_number,
+            :plan_type, :coverage_start, :coverage_end, TRUE, :monthly_premium)
+    """
+    try:
+        db.run(query, parameters={
+            "policy_id": policy_id,
+            "user_id": user_id,
+            "provider_id": provider_id,
+            "policy_number": policy_number,
+            "plan_type": plan_type,
+            "coverage_start": today,
+            "coverage_end": today + timedelta(days=365),
+            "monthly_premium": 0.0  # OHIP is publicly funded; free to user
+        })
+        return f"✅ Policy {policy_number} created for user {user_id}"
+    except Exception as e:
+        print(f"[create_policy] Database error: {str(e)}")
+        return f"❌ Error creating policy: {str(e)}"
+
 
 tools = [
-    get_user_by_id,
+    # get_user_by_id,
+    find_user_by_health_card_or_id,
     get_users_by_provider,
     get_policies_by_user,
     get_active_policies,
@@ -398,7 +498,9 @@ tools = [
     get_claim_audit_logs,
     get_user_claim_documents,
     get_user_preferences,
-    get_user_communications
+    get_user_communications,
+    register_new_user,         # ✅ Added
+    create_policy  
 ]
 
 
@@ -451,3 +553,5 @@ if __name__ == "__main__":
     else:
         print("")
         mcp.run(transport=args.connection_type)
+
+
